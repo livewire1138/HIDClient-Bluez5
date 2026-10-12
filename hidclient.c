@@ -161,6 +161,14 @@ static int read_event(size_t device,int output)
     }
     return result;
 }
+static void close_channels(int channels[2])
+{
+    /* HID teardown acknowledges unplug on interrupt before closing control. */
+    for (int i=1;i>=0;--i) {
+        if (channels[i]>=0) close(channels[i]);
+        channels[i]=-1;
+    }
+}
 static int btbind(int fd,unsigned short port)
 {
     struct sockaddr_l2 address={0}; address.l2_family=AF_BLUETOOTH;
@@ -282,6 +290,7 @@ int main(int argc,char **argv)
         for (size_t i=0;i<device_count;++i) { devices[count-4]=i; fds[count++]=(struct pollfd){eventdevs[i],POLLIN,0}; }
         int ready=poll(fds,count,100);
         if (ready<0) { if (errno==EINTR) continue; perror("poll"); result=1; break; }
+        bool unplug=false;
         bool disconnect=bluez.disconnect; bluez.disconnect=FALSE;
         for (int i=0;i<2;++i) {
             if (fds[i].revents & (POLLERR | POLLHUP | POLLNVAL)) { result=1; stopping=1; break; }
@@ -292,7 +301,12 @@ int main(int argc,char **argv)
             fcntl(fd,F_SETFD,FD_CLOEXEC); fcntl(fd,F_SETFL,O_NONBLOCK);
             if (channels[i]>=0 || (restricted && bacmp(&host,&remote.l2_bdaddr)) ||
                 (channels[1-i]>=0 && bacmp(&peer,&remote.l2_bdaddr))) { close(fd); continue; }
-            if (channels[1-i]<0) { bacpy(&peer,&remote.l2_bdaddr); partial_since=monotonic_ms(); }
+            if (channels[1-i]<0) {
+                bacpy(&peer,&remote.l2_bdaddr); partial_since=monotonic_ms();
+                /* Initialize before any control request can negotiate state. */
+                state.boot=false; state.suspended=false; state.leds=0;
+                state.needs_sync=true;
+            }
             channels[i]=fd;
             if (channels[0]>=0 && channels[1]>=0) {
                 if (grab_input && set_grabs(1)) { result=1; stopping=1; break; }
@@ -308,8 +322,7 @@ int main(int argc,char **argv)
                     }
                     if (stopping) break;
                 }
-                /* Reset host protocol state for each new connection. */
-                state.boot=false; state.suspended=false; state.leds=0; state.needs_sync=true;
+                state.needs_sync=true;
             }
         }
         for (int i=0;i<2;++i) {
@@ -317,7 +330,11 @@ int main(int argc,char **argv)
             if (fds[i+2].revents & POLLIN) {
                 uint8_t packet[256]; ssize_t n=recv(channels[i],packet,sizeof(packet),MSG_DONTWAIT | MSG_TRUNC);
                 if (n==0 || n>(ssize_t)sizeof(packet) || (n<0 && errno!=EAGAIN && errno!=EINTR)) disconnect=true;
-                else if (n>0 && hid_control(&state,packet,(size_t)n,i==1,send_packet,&channels[i])!=0) disconnect=true;
+                else if (n>0) {
+                    int handled=hid_control(&state,packet,(size_t)n,i==1,send_packet,&channels[i]);
+                    if (handled==HID_CONTROL_UNPLUG) unplug=true;
+                    if (handled!=0) disconnect=true;
+                }
             }
         }
         if ((channels[0]>=0)!=(channels[1]>=0)) {
@@ -337,7 +354,12 @@ int main(int argc,char **argv)
         if (disconnect) {
             hid_release(&state,send_packet,&channels[1]);
             if (grab_input) set_grabs(0);
-            for (int i=0;i<2;++i) { if (channels[i]>=0) close(channels[i]); channels[i]=-1; }
+            close_channels(channels);
+            /* RemoveDevice may drop the ACL: close HID in order first, then
+             * invalidate the bond before accepting another connection. */
+            if (unplug && bluez_forget_peer(&bluez,&peer)) {
+                result=1; stopping=1;
+            }
             hid_init(&state,mode,swap);
         }
     }
@@ -346,7 +368,8 @@ usage:
     fprintf(stderr,"Invalid arguments; use --help.\n");
 cleanup:
     hid_release(&state,send_packet,&channels[1]);
-    for (int i=0;i<2;++i) { if (channels[i]>=0) close(channels[i]); if (listeners[i]>=0) close(listeners[i]); }
+    close_channels(channels);
+    for (int i=0;i<2;++i) if (listeners[i]>=0) close(listeners[i]);
     closeevents(); bluez_close(&bluez);
     for (size_t i=0;i<device_count;++i) free(device_paths[i]);
     return result;

@@ -164,11 +164,13 @@ without double-counting legacy wheel events.
 Input overruns recover from an evdev key-state snapshot. Connection setup also
 snapshots held keys. Either HID channel may arrive first, both must have the same
 peer, and an incomplete channel pair times out. Suspend/resume, protocol requests
-and output reports are handled. Signals, device removal, daemon loss and peer
+and output reports are handled. Virtual-cable unplug closes interrupt before control
+and removes only that receiver's bond through the selected BlueZ adapter. If bond
+removal fails, hidclient stops rather than accepting a stale paired connection. Signals, device removal, daemon loss and peer
 closure have explicit cleanup. A removed input stops the program; restart it
 after reconnecting the device. Restart hidclient after restarting BlueZ.
 
-`make check` runs report/protocol tests, descriptor and XML checks, nine
+`make check` runs report/protocol tests, descriptor and XML checks, twelve
 socket/FIFO lifecycle scenarios, CLI tests, and real D-Bus messages against a
 local fake service. It does not touch the system daemon or radio. USB keyboards,
 real evdev grabs, Bluetooth pairing/encryption, sleep/reconnect and each receiver

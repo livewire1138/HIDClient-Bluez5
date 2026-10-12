@@ -16,7 +16,7 @@ struct fixture {
     GMutex mutex;
     GCond condition;
     bool ready;
-    int registrations,unregistrations,connections;
+    int registrations,unregistrations,removals,remove_error;
 };
 static const char fake_xml[]=
     "<node>"
@@ -25,7 +25,7 @@ static const char fake_xml[]=
     "<interface name='org.bluez.ProfileManager1'>"
     "<method name='RegisterProfile'><arg type='o' direction='in'/><arg type='s' direction='in'/><arg type='a{sv}' direction='in'/></method>"
     "<method name='UnregisterProfile'><arg type='o' direction='in'/></method></interface>"
-    "<interface name='org.bluez.Device1'><method name='Connect'/></interface>"
+    "<interface name='org.bluez.Adapter1'><method name='RemoveDevice'><arg type='o' direction='in'/></method></interface>"
     "</node>";
 static GVariant *managed_objects(void)
 {
@@ -65,8 +65,15 @@ static void fake_method(GDBusConnection *bus,const char *sender,const char *path
         g_dbus_method_invocation_return_value(invocation,NULL);
     } else if (!strcmp(method,"UnregisterProfile")) {
         g_atomic_int_inc(&f->unregistrations); g_dbus_method_invocation_return_value(invocation,NULL);
-    } else if (!strcmp(method,"Connect")) {
-        g_atomic_int_inc(&f->connections); g_dbus_method_invocation_return_value(invocation,NULL);
+    } else if (!strcmp(method,"RemoveDevice")) {
+        const char *device; g_variant_get(parameters,"(&o)",&device);
+        assert(!strcmp(path,"/org/bluez/hci2") && !strcmp(interface,"org.bluez.Adapter1"));
+        assert(!strcmp(device,"/org/bluez/hci2/dev_AA_BB_CC_DD_EE_FF"));
+        g_atomic_int_inc(&f->removals);
+        int failure=g_atomic_int_get(&f->remove_error);
+        if (failure) g_dbus_method_invocation_return_dbus_error(invocation,
+            failure==1 ? "org.bluez.Error.InvalidArguments" : "org.bluez.Error.Failed","test failure");
+        else g_dbus_method_invocation_return_value(invocation,NULL);
     } else assert(!"unexpected fake service call");
 }
 static const GDBusInterfaceVTable fake_vtable={.method_call=fake_method};
@@ -88,7 +95,7 @@ static gpointer server_thread(gpointer data)
     assert(f->connection && !error); g_object_unref(stream);
     g_dbus_connection_set_exit_on_close(f->connection,FALSE);
     GDBusNodeInfo *node=g_dbus_node_info_new_for_xml(fake_xml,&error); assert(node && !error);
-    const char *paths[]={"/org/freedesktop/DBus","/","/org/bluez","/org/bluez/hci2/dev_AA_BB_CC_DD_EE_FF"};
+    const char *paths[]={"/org/freedesktop/DBus","/","/org/bluez","/org/bluez/hci2"};
     for (int i=0;i<4;++i) assert(g_dbus_connection_register_object(f->connection,paths[i],node->interfaces[i],&fake_vtable,f,NULL,&error));
     f->loop=g_main_loop_new(f->context,FALSE);
     g_dbus_connection_start_message_processing(f->connection);
@@ -134,6 +141,12 @@ int main(void)
     g_dbus_message_set_body(message,g_variant_new("(o)","/org/bluez/hci2/dev_AA_BB_CC_DD_EE_FF"));
     assert(g_dbus_connection_send_message(f.connection,message,0,NULL,&error)); g_object_unref(message);
     wait_flag(&session,&session.disconnect);
+    bdaddr_t peer; assert(!str2ba("AA:BB:CC:DD:EE:FF",&peer));
+    assert(!bluez_forget_peer(&session,&peer));
+    g_atomic_int_set(&f.remove_error,1); assert(bluez_forget_peer(&session,&peer)== -1);
+    g_atomic_int_set(&f.remove_error,2); assert(bluez_forget_peer(&session,&peer)== -1);
+    assert(g_atomic_int_get(&f.removals)==3);
+    struct bluez_session missing={0}; assert(bluez_forget_peer(&missing,&peer)== -1);
     /* Verify daemon owner changes invalidate the session. */
     GVariant *owners=g_variant_ref_sink(g_variant_new("(sss)","org.bluez",":1.99",":1.100"));
     owner_changed(NULL,NULL,NULL,NULL,NULL,owners,&session); assert(session.lost); g_variant_unref(owners);
@@ -141,6 +154,6 @@ int main(void)
     bluez_close(&session); assert(g_atomic_int_get(&f.unregistrations)==1);
     g_main_context_invoke(f.context,quit_server,f.loop); g_thread_join(thread);
     g_free(f.guid); g_cond_clear(&f.condition); g_mutex_clear(&f.mutex);
-    puts("GDBus adapter selection, registration, callbacks and cleanup checks passed");
+    puts("GDBus adapter selection, registration, callbacks, bond removal and cleanup checks passed");
     return 0;
 }

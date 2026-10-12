@@ -99,7 +99,7 @@ static void protocol(void)
     key(0,KEY_B,1); sync(0); assert(!captured.count);
     const uint8_t resume[]={0x14}; control(resume,1); assert(!s.suspended && s.needs_sync);
     clear(); assert(!hid_sync(&s,save,NULL)); assert(captured.data[0][4]==5);
-    const uint8_t unplug[]={0x15}; assert(hid_control(&s,unplug,1,false,save,NULL)==1);
+    const uint8_t unplug[]={0x15}; assert(hid_control(&s,unplug,1,false,save,NULL)==HID_CONTROL_UNPLUG);
 }
 static void recovery(void)
 {

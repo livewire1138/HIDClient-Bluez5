@@ -183,6 +183,23 @@ fail:
     fprintf(stderr,"HID profile registration: %s\n",error ? error->message : "failed");
     g_clear_error(&error); return -1;
 }
+int bluez_forget_peer(struct bluez_session *s,const bdaddr_t *peer)
+{
+    if (!s->bus || !s->adapter_path || s->lost) {
+        fprintf(stderr,"Cannot remove unplugged peer bond: BlueZ session unavailable\n");
+        return -1;
+    }
+    char mac[18]; ba2str(peer,mac);
+    for (char *p=mac;*p;++p) if (*p==':') *p='_';
+    char *path=g_strdup_printf("%s/dev_%s",s->adapter_path,mac);
+    GError *error=NULL;
+    GVariant *reply=call(s,s->adapter_path,"org.bluez.Adapter1","RemoveDevice",
+                         g_variant_new("(o)",path),&error);
+    g_free(path);
+    if (reply) { g_variant_unref(reply); return 0; }
+    fprintf(stderr,"Cannot remove unplugged peer bond: %s\n",error ? error->message : "failed");
+    g_clear_error(&error); return -1;
+}
 void bluez_dispatch(struct bluez_session *s)
 {
     (void)s;

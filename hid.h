@@ -8,6 +8,7 @@
 #define HID_KEYBOARD 1
 #define HID_MOUSE 2
 #define HID_CONSUMER 3
+#define HID_CONTROL_UNPLUG 1
 #define HID_MODE_KEYBOARD 1
 #define HID_MODE_MOUSE 2
 #define HID_MODE_COMBO 3

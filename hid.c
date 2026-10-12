@@ -246,7 +246,7 @@ int hid_control(struct hid_state *s,const uint8_t *p,size_t n,bool interrupt,hid
         if (n!=1) return handshake(4,sink,context);
         if (parameter==3) s->suspended=true;
         else if (parameter==4) { s->suspended=false; s->needs_sync=true; }
-        else if (parameter==5) return 1; /* Virtual cable unplug. */
+        else if (parameter==5) return HID_CONTROL_UNPLUG; /* Virtual cable unplug. */
         else return handshake(3,sink,context);
         return 0;
     }

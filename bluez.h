@@ -14,6 +14,7 @@ char *bluez_service_record(const char *, int);
 GVariant *bluez_profile_options(const char *, int);
 int bluez_open(struct bluez_session *, const char *, bdaddr_t *);
 int bluez_register(struct bluez_session *, const char *, int);
+int bluez_forget_peer(struct bluez_session *, const bdaddr_t *);
 void bluez_dispatch(struct bluez_session *);
 void bluez_close(struct bluez_session *);
 #endif
