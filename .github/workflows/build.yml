@@ -1,0 +1,17 @@
+name: Linux build and checks
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config libbluetooth-dev libglib2.0-dev python3
+      - name: Build and test
+        run: make check
+      - name: Check undefined behavior
+        run: |
+          make clean
+          make check CFLAGS='-O1 -g -Wall -Wextra -Wpedantic -fsanitize=undefined -fno-sanitize-recover=all' LDFLAGS='-fsanitize=undefined'
