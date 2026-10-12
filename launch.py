@@ -1,65 +1,49 @@
 #!/usr/bin/env python3
+"""Optional convenience wrapper; the C executable owns the full lifecycle."""
+import argparse
+import os
+from pathlib import Path
+import re
+import sys
 
-SERVICE_NAME = "hidclient" #what the host sees
-CONNECT_TO = "EC:0E:C4:AB:70:0E" #mac address - this is my PS4
-#CONNECT_TO = "" #set this to "" if you want to pair
-ATTACH_DEVICES = ["AT Translated Set 2 keyboard".lower()] #This is my Thinkpad keyboard - lowercase checks leave less room for error(?)
-#Use `./hidclient -l` to see the names of devices - if you connect/disconnect devices, their index may change, so this script gets the index programatically
-#ATTACH_DEVICES = [] #leave blank for all devices (NOT RECOMMENDED) - Mouses don't seem to operate too great
 
-import os, subprocess, shlex, time
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--device', action='append', required=True)
+    parser.add_argument('--target', help='accept connections only from this host MAC')
+    parser.add_argument('--adapter', help='local adapter, for example hci0')
+    parser.add_argument('--mode', choices=['keyboard', 'mouse', 'combo'], default='combo')
+    parser.add_argument('--name', help='SDP service name')
+    parser.add_argument('--no-grab', action='store_true')
+    parser.add_argument('--swap-ctrl-meta', action='store_true')
+    parser.add_argument('--exit-key', default='F12')
+    args = parser.parse_args()
+    if args.target and not re.fullmatch(r'(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}', args.target):
+        parser.error('--target must be a Bluetooth MAC address')
+    for path in args.device:
+        if not Path(path).exists():
+            parser.error(f'Input device does not exist: {path}')
+    executable = Path(__file__).resolve().with_name('hidclient')
+    command = [str(executable), '--mode', args.mode, '--exit-key', args.exit_key]
+    for path in args.device:
+        command.extend(['--device', path])
+    if not args.no_grab:
+        command.append('--grab')
+    if args.swap_ctrl_meta:
+        command.append('--swap-ctrl-meta')
+    if args.adapter:
+        command.extend(['--adapter', args.adapter])
+    if args.name:
+        command.extend(['--name', args.name])
+    if args.target:
+        command.extend(['--host', args.target])
+    try:
+        os.execv(str(executable), command)
+    except OSError as error:
+        print(f'hidclient: {error}', file=sys.stderr)
+        return 1
+    return 0
 
-if os.geteuid() != 0:
-	exit("This must be run as root")
 
-def setLED(state):
-	try:
-		with open("/sys/class/leds/input3::capslock/brightness", "w") as f:
-			f.write(state)
-	except:
-		pass
-
-print("IF YOUR KEYBOARD HAS BEEN TAKEN, PRESS Ctrl+Alt+ScrLk TO EXIT\n") #this is the bind to exit hidclient
-
-print("Will be connecting to: [%s]" % (CONNECT_TO) if CONNECT_TO else "Will be attempting to pair...\nRemember to add the MAC address of the connected device to this script!")
-print("") #don't get drowned
-
-print("Restarting bluetoothd") #get a clean bluetooth stack
-subprocess.call(shlex.split("systemctl restart bluetooth.service"))
-time.sleep(1) #naively wait for systemctl - there doesn't seem to be a easy solution that works better than this
-
-if not CONNECT_TO: #pairing mode
-	subprocess.check_output("bluetoothctl", input=b"discoverable on\nagent NoInputNoOutput\n") #do this here, so that it doesn't interfere with below
-
-print("- Setting up bluetooth settings") #set up basic bluetooth settings
-subprocess.call(shlex.split("hciconfig hci0 class 0x000540")) #emulate HID device
-subprocess.call(shlex.split("hciconfig hci0 name \"%s\"" % (SERVICE_NAME)))
-subprocess.call(shlex.split("hciconfig hci0 sspmode 1")) #simple pairing mode disable
-
-print("- Removing unused SDPs")
-rechandle_prefix = "Service RecHandle: "
-for x in subprocess.check_output(shlex.split("sdptool browse local")).decode("utf-8").splitlines():
-	if x.startswith(rechandle_prefix):
-		subprocess.call(shlex.split( "sdptool del %s" % (x[len(rechandle_prefix):]) ), stdout=subprocess.PIPE)
-
-print("Finding input device ids") #hidclient setup
-device_ids = []
-for x in subprocess.check_output(shlex.split("./hidclient -l")).decode("utf-8").splitlines():
-	x = x.strip()
-	x = shlex.split(x) #will keep the names intact as they are inside apostrophes
-	if x[0].isdigit():
-		if x[2].lower() in ATTACH_DEVICES:
-			print("- Found \"%s\"" % (x[2]))
-			device_ids.append("-e" + x[0])
-
-print("Starting hidclient...")
-setLED("1")
-hidclient = subprocess.Popen(shlex.split("./hidclient -x") + device_ids)
-
-if CONNECT_TO: #NOT pairing mode
-	subprocess.check_output("bluetoothctl", input=b"connect %s\n" % CONNECT_TO.encode("utf-8"))
-
-hidclient.communicate() #wait for exit
-setLED("0")
-print("Restarting bluetoothd")
-subprocess.call(shlex.split("systemctl restart bluetooth.service")) #put the bluetooth stack back to normal
+if __name__ == '__main__':
+    sys.exit(main())

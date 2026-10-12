@@ -1,2 +1,10 @@
 hidclient
 *.geany
+
+tests/test_core
+__pycache__/
+tests/test_hid
+tests/test_bluez
+tests/test_dbus
+core
+core.*
